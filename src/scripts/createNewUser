@@ -75,6 +75,9 @@ sudo smbpasswd -e ${userName}
 
 # Add software repository
 echo 'export PATH="/software/bin:$PATH"' >> ~/.bashrc
-    echo 'export PYENV_ROOT="$HOME/.pyenv"' >> ~/.bashrc
-    echo 'command -v pyenv >/dev/null || export PATH="$PYENV_ROOT/bin:$PATH"' >> ~/.bashrc
-    echo 'eval "$(pyenv init -)"' >> ~/.bashrc
+echo 'export PYENV_ROOT="$HOME/.pyenv"' >> ~/.bashrc
+echo 'command -v pyenv >/dev/null || export PATH="$PYENV_ROOT/bin:$PATH"' >> ~/.bashrc
+echo 'eval "$(pyenv init -)"' >> ~/.bashrc
+
+# Add open-PBS job scheduler access
+echo "source /etc/profile.d/pbs.sh" >> ~/.bashrc
