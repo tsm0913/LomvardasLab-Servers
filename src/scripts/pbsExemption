@@ -1,0 +1,6 @@
+#!/bin/bash
+
+# Move PBS daemons to the pbs_daemons cgroup
+for pid in $(pgrep pbs_server pbs_sched pbs_mom); do
+    echo $pid > /sys/fs/cgroup/pbs_daemons/cgroup.procs
+done
