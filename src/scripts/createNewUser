@@ -19,10 +19,9 @@ usage() {
     echo "This function creates a new user account, imposing 2.5TB file limits and keeping the user home directory outside of the root directory."
     echo "Usage: $0"
     echo "-u <userName>  User name for the new user. REQUIRED."
-    echo "-d <dataDir>   Media drive onto which to put their home directory. REQUIRED."
+    echo "-d <dataDir>   Data drive to use (dataA for nvme2, dataB for nvme1, dataC for nvme0). REQUIRED."
     echo "-l <limit>     Storage limit in TB (default: 2.5)"
     echo "-h <homeDir>   Optional home directory name (if different from userName)"
-    echo "-n             Use /nvme2 instead of /media for storage location"
     exit 1
 }
 
@@ -30,13 +29,12 @@ usage() {
 default_storageLimit=2.5
 
 # Parse input flags
-while getopts "u:d:l:h:n" opt; do
+while getopts "u:d:l:h:" opt; do
     case $opt in
         u) userName=$OPTARG ;;
         d) dataDir=$OPTARG ;;
         l) storageLimit=$OPTARG ;;
         h) homeDir=$OPTARG ;;
-        n) useNvme2=true ;;
         *) usage ;;
     esac
 done
@@ -52,17 +50,28 @@ if [[ -z "$userName" || -z "$dataDir" ]]; then
     usage
 fi
 
+# Map dataDir to appropriate nvme mount point
+if [ "$dataDir" = "dataA" ]; then
+    storageMount="/nvme2"
+    echo "Using $storageMount for $dataDir"
+elif [ "$dataDir" = "dataB" ]; then
+    storageMount="/nvme1"
+    echo "Using $storageMount for $dataDir"
+elif [ "$dataDir" = "dataC" ]; then
+    storageMount="/nvme0"
+    echo "Using $storageMount for $dataDir"
+else
+    storageMount="/media/${dataDir}"
+    echo "Using custom storage location: $storageMount"
+fi
+
 # Debugging: Print variable values to verify they are set
 printf "\033[1;34m\nParameters:\033[0m\n" >&2
 echo "userName: $userName" >&2
 echo "homeDir: $homeDir" >&2
 echo "dataDir: $dataDir" >&2
+echo "storageMount: $storageMount" >&2
 echo "storageLimit: $storageLimit" >&2
-if [ "$useNvme2" = true ]; then
-    echo "Using /nvme2 storage location" >&2
-else
-    echo "Using /media storage location" >&2
-fi
 
 # Check if user already exists
 if id "$userName" &>/dev/null; then
@@ -112,62 +121,32 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-if [ "$useNvme2" = true ] && [ -d "/nvme2" ]; then
-    # Use nvme2 structure
-    echo "Using /nvme2 directory structure"
-    mkdir -p "/nvme2/${homeDir}/home"
-    if [ $? -ne 0 ]; then
-        echo "Failed to create directory /nvme2/${homeDir}/home. Exiting."
-        exit 1
-    fi
+# Create and mount storage directory
+echo "Creating directory structure on $storageMount"
+mkdir -p "${storageMount}/${homeDir}/home"
+if [ $? -ne 0 ]; then
+    echo "Failed to create directory ${storageMount}/${homeDir}/home. Exiting."
+    exit 1
+fi
 
-    chown ${userName}:${userName} "/home/${homeDir}"
-    chown ${userName}:${userName} "/nvme2/${homeDir}/home"
-    chmod 755 "/nvme2/${homeDir}/home"
+chown ${userName}:${userName} "/home/${homeDir}"
+chown ${userName}:${userName} "${storageMount}/${homeDir}/home"
+chmod 755 "${storageMount}/${homeDir}/home"
 
-    # Mount the directory
-    echo "Mounting /nvme2/${homeDir}/home to /home/${homeDir}"
-    mount --bind "/nvme2/${homeDir}/home" "/home/${homeDir}"
-    if [ $? -ne 0 ]; then
-        echo "Failed to mount directory. Exiting."
-        exit 1
-    fi
+# Mount the directory
+echo "Mounting ${storageMount}/${homeDir}/home to /home/${homeDir}"
+mount --bind "${storageMount}/${homeDir}/home" "/home/${homeDir}"
+if [ $? -ne 0 ]; then
+    echo "Failed to mount directory. Exiting."
+    exit 1
+fi
 
-    # Check if entry already exists in fstab
-    if ! grep -q "/nvme2/${homeDir}/home /home/${homeDir}" /etc/fstab; then
-        echo "Adding mount entry to /etc/fstab"
-        echo "/nvme2/${homeDir}/home /home/${homeDir} none bind 0 0" | tee -a /etc/fstab
-    else
-        echo "Mount entry already exists in /etc/fstab"
-    fi
+# Check if entry already exists in fstab
+if ! grep -q "${storageMount}/${homeDir}/home /home/${homeDir}" /etc/fstab; then
+    echo "Adding mount entry to /etc/fstab"
+    echo "${storageMount}/${homeDir}/home /home/${homeDir} none bind 0 0" | tee -a /etc/fstab
 else
-    # Use media structure
-    echo "Using /media/${dataDir} directory structure"
-    mkdir -p "/media/${dataDir}/${homeDir}/home"
-    if [ $? -ne 0 ]; then
-        echo "Failed to create directory /media/${dataDir}/${homeDir}/home. Exiting."
-        exit 1
-    fi
-
-    chown ${userName}:${userName} "/home/${homeDir}"
-    chown ${userName}:${userName} "/media/${dataDir}/${homeDir}/home"
-    chmod 755 "/media/${dataDir}/${homeDir}/home"
-
-    # Mount the directory
-    echo "Mounting /media/${dataDir}/${homeDir}/home to /home/${homeDir}"
-    mount --bind "/media/${dataDir}/${homeDir}/home" "/home/${homeDir}"
-    if [ $? -ne 0 ]; then
-        echo "Failed to mount directory. Exiting."
-        exit 1
-    fi
-
-    # Check if entry already exists in fstab
-    if ! grep -q "/media/${dataDir}/${homeDir}/home /home/${homeDir}" /etc/fstab; then
-        echo "Adding mount entry to /etc/fstab"
-        echo "/media/${dataDir}/${homeDir}/home /home/${homeDir} none bind 0 0" | tee -a /etc/fstab
-    else
-        echo "Mount entry already exists in /etc/fstab"
-    fi
+    echo "Mount entry already exists in /etc/fstab"
 fi
 
 # Copy files from backup
@@ -182,11 +161,7 @@ if [ -d "/home/${userName}.bak" ]; then
 fi
 
 # Find the actual filesystem mount point for quota
-if [ "$useNvme2" = true ] && [ -d "/nvme2" ]; then
-    mount_point=$(df --output=target "/nvme2" | tail -1 | xargs)
-else
-    mount_point=$(df --output=target "/media/${dataDir}" | tail -1 | xargs)
-fi
+mount_point=$(df --output=target "${storageMount}" | tail -1 | xargs)
 echo "Setting quota on mount point: $mount_point"
 
 # Check if quotas are enabled on the filesystem
@@ -233,6 +208,6 @@ systemctl daemon-reload
 echo -e "\n\033[1;32mUser creation complete!\033[0m"
 echo "User: $userName"
 echo "Home directory: /home/$homeDir"
-echo "Data directory: ${useNvme2:+/nvme2}${useNvme2:-/media/$dataDir}/${homeDir}/home"
+echo "Storage location: ${storageMount}/${homeDir}/home"
 echo "Storage limit: ${storageLimit}TB"
 echo -e "\033[1;33mNote: User must log out and log back in for all changes to take effect.\033[0m"
