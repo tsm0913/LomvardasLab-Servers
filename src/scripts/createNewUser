@@ -195,15 +195,16 @@ if ! grep -q "usrquota" /etc/fstab | grep "$mount_point"; then
     echo "You may need to add 'usrquota' to the mount options in /etc/fstab and remount"
 fi
 
-# Enable samba access for new user
+# Enable samba access for new user - FIXED INTERACTIVE PASSWORD ENTRY
 echo "Setting up Samba access for user $userName"
-(echo "password"; echo "password") | smbpasswd -a ${userName} 2>/dev/null
-if [ $? -ne 0 ]; then
-    echo "Please enter a Samba password for user $userName:"
-    smbpasswd -a ${userName}
+echo "Please enter Samba password for user $userName when prompted:"
+smbpasswd -a ${userName}
+if [ $? -eq 0 ]; then
+    echo "Samba password set successfully"
+    smbpasswd -e ${userName}
+else
+    echo "Failed to set Samba password. Please run 'sudo smbpasswd -a ${userName}' manually."
 fi
-
-smbpasswd -e ${userName}
 
 # Make sure the .bashrc file exists
 touch "/home/${homeDir}/.bashrc"
