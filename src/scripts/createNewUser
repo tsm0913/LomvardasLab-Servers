@@ -1,5 +1,19 @@
 #!/bin/bash
 
+# Check if running with appropriate privileges
+if [ "$(id -u)" -ne 0 ]; then
+   echo "This script must be run as root or with sudo" >&2
+   exit 1
+fi
+
+# Check for required tools
+for cmd in adduser usermod rsync mount grep chown chmod smbpasswd; do
+    if ! command -v $cmd &> /dev/null; then
+        echo "Error: Required command '$cmd' not found" >&2
+        exit 1
+    fi
+done
+
 # Function to display usage information
 usage() {
     echo "This function creates a new user account, imposing 2.5TB file limits and keeping the user home directory outside of the root directory."
@@ -7,6 +21,8 @@ usage() {
     echo "-u <userName>  User name for the new user. REQUIRED."
     echo "-d <dataDir>   Media drive onto which to put their home directory. REQUIRED."
     echo "-l <limit>     Storage limit in TB (default: 2.5)"
+    echo "-h <homeDir>   Optional home directory name (if different from userName)"
+    echo "-n             Use /nvme2 instead of /media for storage location"
     exit 1
 }
 
@@ -14,17 +30,22 @@ usage() {
 default_storageLimit=2.5
 
 # Parse input flags
-while getopts "u:d:l:" opt; do
+while getopts "u:d:l:h:n" opt; do
     case $opt in
         u) userName=$OPTARG ;;
         d) dataDir=$OPTARG ;;
         l) storageLimit=$OPTARG ;;
+        h) homeDir=$OPTARG ;;
+        n) useNvme2=true ;;
         *) usage ;;
     esac
 done
 
 # Use default if storageLimit not provided
 storageLimit="${storageLimit:-$default_storageLimit}"
+
+# Use userName for homeDir if not specified
+homeDir="${homeDir:-$userName}"
 
 # Ensure all required parameters are provided
 if [[ -z "$userName" || -z "$dataDir" ]]; then
@@ -34,33 +55,138 @@ fi
 # Debugging: Print variable values to verify they are set
 printf "\033[1;34m\nParameters:\033[0m\n" >&2
 echo "userName: $userName" >&2
+echo "homeDir: $homeDir" >&2
 echo "dataDir: $dataDir" >&2
 echo "storageLimit: $storageLimit" >&2
+if [ "$useNvme2" = true ]; then
+    echo "Using /nvme2 storage location" >&2
+else
+    echo "Using /media storage location" >&2
+fi
 
-# Create the user first
-echo "Creating new user: $userName"
-sudo adduser $userName
+# Check if user already exists
+if id "$userName" &>/dev/null; then
+    echo "Warning: User $userName already exists. Continuing with existing user."
+else
+    # Create the user first
+    echo "Creating new user: $userName"
+    adduser $userName
+    if [ $? -ne 0 ]; then
+        echo "Failed to create user $userName. Exiting."
+        exit 1
+    fi
+fi
+
+# Update the home directory if it's different from the username
+if [ "$userName" != "$homeDir" ]; then
+    echo "Setting home directory to /home/$homeDir"
+
+    # Check if user has running processes
+    if pgrep -u "$userName" &>/dev/null; then
+        echo "Warning: User $userName has running processes. Home directory change may fail."
+        echo "You may need to manually kill these processes or reboot."
+        ps -u "$userName" -o pid,cmd --no-headers
+    fi
+
+    usermod -d "/home/$homeDir" $userName
+    if [ $? -ne 0 ]; then
+        echo "Warning: Failed to set home directory. This might be because the user has running processes."
+        echo "Try running: sudo pkill -u $userName"
+        echo "Or reboot and try again."
+    fi
+fi
 
 # Backup and setup directories
-sudo mv "/home/${userName}" "/home/${userName}.bak"
-sudo mkdir "/home/${userName}"
-sudo mkdir -p "/media/${dataDir}/${userName}/home"
-sudo chown ${userName}:${userName} "/home/${userName}"
-sudo chown ${userName}:${userName} "/media/${dataDir}/${userName}/home"
-sudo chmod 755 "/media/${dataDir}/${userName}/home"
+if [ -d "/home/${userName}" ] && [ "$userName" != "$homeDir" ]; then
+    echo "Backing up /home/${userName} to /home/${userName}.bak"
+    mv "/home/${userName}" "/home/${userName}.bak"
+    if [ $? -ne 0 ]; then
+        echo "Warning: Failed to back up home directory. Continuing..."
+    fi
+fi
 
-# Mount the directory
-sudo mount --bind "/media/${dataDir}/${userName}/home" "/home/${userName}"
-echo "/media/${dataDir}/${userName}/home /home/${userName} none bind 0 0" | sudo tee -a /etc/fstab
+# Create home directory if it doesn't exist
+mkdir -p "/home/${homeDir}"
+if [ $? -ne 0 ]; then
+    echo "Failed to create directory /home/${homeDir}. Exiting."
+    exit 1
+fi
+
+if [ "$useNvme2" = true ] && [ -d "/nvme2" ]; then
+    # Use nvme2 structure
+    echo "Using /nvme2 directory structure"
+    mkdir -p "/nvme2/${homeDir}/home"
+    if [ $? -ne 0 ]; then
+        echo "Failed to create directory /nvme2/${homeDir}/home. Exiting."
+        exit 1
+    fi
+
+    chown ${userName}:${userName} "/home/${homeDir}"
+    chown ${userName}:${userName} "/nvme2/${homeDir}/home"
+    chmod 755 "/nvme2/${homeDir}/home"
+
+    # Mount the directory
+    echo "Mounting /nvme2/${homeDir}/home to /home/${homeDir}"
+    mount --bind "/nvme2/${homeDir}/home" "/home/${homeDir}"
+    if [ $? -ne 0 ]; then
+        echo "Failed to mount directory. Exiting."
+        exit 1
+    fi
+
+    # Check if entry already exists in fstab
+    if ! grep -q "/nvme2/${homeDir}/home /home/${homeDir}" /etc/fstab; then
+        echo "Adding mount entry to /etc/fstab"
+        echo "/nvme2/${homeDir}/home /home/${homeDir} none bind 0 0" | tee -a /etc/fstab
+    else
+        echo "Mount entry already exists in /etc/fstab"
+    fi
+else
+    # Use media structure
+    echo "Using /media/${dataDir} directory structure"
+    mkdir -p "/media/${dataDir}/${homeDir}/home"
+    if [ $? -ne 0 ]; then
+        echo "Failed to create directory /media/${dataDir}/${homeDir}/home. Exiting."
+        exit 1
+    fi
+
+    chown ${userName}:${userName} "/home/${homeDir}"
+    chown ${userName}:${userName} "/media/${dataDir}/${homeDir}/home"
+    chmod 755 "/media/${dataDir}/${homeDir}/home"
+
+    # Mount the directory
+    echo "Mounting /media/${dataDir}/${homeDir}/home to /home/${homeDir}"
+    mount --bind "/media/${dataDir}/${homeDir}/home" "/home/${homeDir}"
+    if [ $? -ne 0 ]; then
+        echo "Failed to mount directory. Exiting."
+        exit 1
+    fi
+
+    # Check if entry already exists in fstab
+    if ! grep -q "/media/${dataDir}/${homeDir}/home /home/${homeDir}" /etc/fstab; then
+        echo "Adding mount entry to /etc/fstab"
+        echo "/media/${dataDir}/${homeDir}/home /home/${homeDir} none bind 0 0" | tee -a /etc/fstab
+    else
+        echo "Mount entry already exists in /etc/fstab"
+    fi
+fi
 
 # Copy files from backup
 if [ -d "/home/${userName}.bak" ]; then
-    sudo rsync -avP "/home/${userName}.bak/" "/media/${dataDir}/${userName}/home/"
-    sudo rm -rf "/home/${userName}.bak"
+    echo "Copying files from backup directory"
+    rsync -avP "/home/${userName}.bak/" "/home/${homeDir}/"
+    if [ $? -eq 0 ]; then
+        rm -rf "/home/${userName}.bak"
+    else
+        echo "Warning: Failed to copy files from backup. Backup remains at /home/${userName}.bak"
+    fi
 fi
 
 # Find the actual filesystem mount point for quota
-mount_point=$(df --output=target "/media/${dataDir}" | tail -1 | xargs)
+if [ "$useNvme2" = true ] && [ -d "/nvme2" ]; then
+    mount_point=$(df --output=target "/nvme2" | tail -1 | xargs)
+else
+    mount_point=$(df --output=target "/media/${dataDir}" | tail -1 | xargs)
+fi
 echo "Setting quota on mount point: $mount_point"
 
 # Check if quotas are enabled on the filesystem
@@ -70,14 +196,42 @@ if ! grep -q "usrquota" /etc/fstab | grep "$mount_point"; then
 fi
 
 # Enable samba access for new user
-sudo smbpasswd -a ${userName}
-sudo smbpasswd -e ${userName}
+echo "Setting up Samba access for user $userName"
+(echo "password"; echo "password") | smbpasswd -a ${userName} 2>/dev/null
+if [ $? -ne 0 ]; then
+    echo "Please enter a Samba password for user $userName:"
+    smbpasswd -a ${userName}
+fi
 
-# Add software repository
-echo 'export PATH="/software/bin:$PATH"' >> ~/.bashrc
-echo 'export PYENV_ROOT="$HOME/.pyenv"' >> ~/.bashrc
-echo 'command -v pyenv >/dev/null || export PATH="$PYENV_ROOT/bin:$PATH"' >> ~/.bashrc
-echo 'eval "$(pyenv init -)"' >> ~/.bashrc
+smbpasswd -e ${userName}
 
-# Add open-PBS job scheduler access
-echo "source /etc/profile.d/pbs.sh" >> ~/.bashrc
+# Make sure the .bashrc file exists
+touch "/home/${homeDir}/.bashrc"
+chown ${userName}:${userName} "/home/${homeDir}/.bashrc"
+
+# Add software repository - to the new user's .bashrc
+echo "Setting up environment in user's .bashrc"
+if ! grep -q "export PATH=\"/software/bin:\$PATH\"" "/home/${homeDir}/.bashrc"; then
+    echo 'export PATH="/software/bin:$PATH"' >> "/home/${homeDir}/.bashrc"
+fi
+
+if ! grep -q "export PYENV_ROOT=\"\$HOME/.pyenv\"" "/home/${homeDir}/.bashrc"; then
+    echo 'export PYENV_ROOT="$HOME/.pyenv"' >> "/home/${homeDir}/.bashrc"
+    echo 'command -v pyenv >/dev/null || export PATH="$PYENV_ROOT/bin:$PATH"' >> "/home/${homeDir}/.bashrc"
+    echo 'eval "$(pyenv init -)"' >> "/home/${homeDir}/.bashrc"
+fi
+
+# Add open-PBS job scheduler access - to the new user's .bashrc
+if ! grep -q "source /etc/profile.d/pbs.sh" "/home/${homeDir}/.bashrc"; then
+    echo "source /etc/profile.d/pbs.sh" >> "/home/${homeDir}/.bashrc"
+fi
+
+echo "Reloading systemd to apply mount changes"
+systemctl daemon-reload
+
+echo -e "\n\033[1;32mUser creation complete!\033[0m"
+echo "User: $userName"
+echo "Home directory: /home/$homeDir"
+echo "Data directory: ${useNvme2:+/nvme2}${useNvme2:-/media/$dataDir}/${homeDir}/home"
+echo "Storage limit: ${storageLimit}TB"
+echo -e "\033[1;33mNote: User must log out and log back in for all changes to take effect.\033[0m"
