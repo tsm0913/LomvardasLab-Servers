@@ -7,7 +7,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # Check for required tools
-for cmd in adduser usermod rsync mount grep chown chmod smbpasswd; do
+for cmd in adduser usermod rsync mount grep chown chmod smbpasswd setquota; do
     if ! command -v $cmd &> /dev/null; then
         echo "Error: Required command '$cmd' not found" >&2
         exit 1
@@ -170,6 +170,23 @@ if ! grep -q "usrquota" /etc/fstab | grep "$mount_point"; then
     echo "You may need to add 'usrquota' to the mount options in /etc/fstab and remount"
 fi
 
+# Find the device for the mount point
+device=$(df --output=source "${mount_point}" | tail -1 | xargs)
+echo "Setting quota on device: $device"
+
+# Convert TB to KB for quota (1TB = 1024³ KB = 1,073,741,824 KB)
+quota_kb=$(echo "${storageLimit} * 1073741824" | bc | cut -d'.' -f1)
+echo "Setting hard limit of ${quota_kb} KB (${storageLimit} TB) for user ${userName}"
+
+# Set the disk quota for the user
+setquota -u ${userName} 0 ${quota_kb} 0 0 ${device}
+if [ $? -eq 0 ]; then
+    echo "Disk quota successfully set for user ${userName}: ${storageLimit} TB"
+else
+    echo "Failed to set disk quota for user ${userName}. Check if quotas are enabled."
+    echo "You may need to run 'quotacheck -vugm ${mount_point}' to initialize quota files."
+fi
+
 # Enable samba access for new user - FIXED INTERACTIVE PASSWORD ENTRY
 echo "Setting up Samba access for user $userName"
 echo "Please enter Samba password for user $userName when prompted:"
@@ -209,5 +226,5 @@ echo -e "\n\033[1;32mUser creation complete!\033[0m"
 echo "User: $userName"
 echo "Home directory: /home/$homeDir"
 echo "Storage location: ${storageMount}/${homeDir}/home"
-echo "Storage limit: ${storageLimit}TB"
+echo "Storage limit: ${storageLimit}TB (${quota_kb} KB)"
 echo -e "\033[1;33mNote: User must log out and log back in for all changes to take effect.\033[0m"
