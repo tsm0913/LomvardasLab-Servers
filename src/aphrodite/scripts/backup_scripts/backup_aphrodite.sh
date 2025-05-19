@@ -16,11 +16,11 @@ DATE_STR=$(date +"%Y_%m_%d_%I_%M_%p")
 FULL_LOGFILE="${LOGFILE_PATH}/aphrodite_backup_${DATE_STR}.log"
 
 # Run the backup commands and log output
-sudo screen -S aphrodite_backup -L -Logfile "$FULL_LOGFILE" bash -c '
-  rsync -avh --info=progress2 --update --no-links --exclude="*.Rdata" --exclude="*.RData" --exclude="*.fastq" --exclude="*.sam" --max-size=20g --delete --ignore-errors /home/ /mnt/icarus2/data/AphroditeBackup/home/;
-  rsync -avh --info=progress2 --update --no-links --exclude="*.Rdata" --exclude="*.RData" --exclude="*.fastq" --exclude="*.sam" --max-size=20g --delete --ignore-errors /media/storageA/ /mnt/icarus2/data2/AphroditeBackup/storageA/;
-  rsync -avh --info=progress2 --update --no-links --exclude="*.Rdata" --exclude="*.RData" --exclude="*.fastq" --exclude="*.sam" --max-size=20g --delete --ignore-errors /media/storageB/ /mnt/icarus2/data/AphroditeBackup/storageB/;
-  rsync -avh --info=progress2 --update --no-links --exclude="*.Rdata" --exclude="*.RData" --exclude="*.fastq" --exclude="*.sam" --max-size=20g --delete --ignore-errors /media/storageC/ /mnt/icarus2/data/AphroditeBackup/storageC/;
-  rsync -avh --info=progress2 --update --no-links --exclude="*.Rdata" --exclude="*.RData" --exclude="*.fastq" --exclude="*.sam" --max-size=20g --delete --ignore-errors /media/storageD/ /mnt/icarus2/data/AphroditeBackup/storageD/;
-  rsync -avh --info=progress2 --update --no-links --exclude="*.Rdata" --exclude="*.RData" --exclude="*.fastq" --exclude="*.sam" --max-size=20g --delete --ignore-errors /media/storageE/ /mnt/icarus2/data/AphroditeBackup/storageE/;
+sudo screen -S backup_aphrodite -L -Logfile "$FULL_LOGFILE" bash -c '
+sudo rsync -avh --info=progress2 --update --no-links --exclude="*.Rdata" --exclude="*.RData" --exclude="*.fastq" --exclude="*.sam" --max-size=20g --delete --ignore-errors /home/ /mnt/icarus2/data/AphroditeBackup/home/;
+sudo rsync -avh --info=progress2 --update --no-links --exclude="*.Rdata" --exclude="*.RData" --exclude="*.fastq" --exclude="*.sam" --max-size=20g --delete --ignore-errors /media/storageA/ /mnt/icarus2/data2/AphroditeBackup/storageA/;
+sudo rsync -avh --info=progress2 --update --no-links --exclude="*.Rdata" --exclude="*.RData" --exclude="*.fastq" --exclude="*.sam" --max-size=20g --delete --ignore-errors /media/storageB/ /mnt/icarus2/data/AphroditeBackup/storageB/;
+sudo rsync -avh --info=progress2 --update --no-links --exclude="*.Rdata" --exclude="*.RData" --exclude="*.fastq" --exclude="*.sam" --max-size=20g --delete --ignore-errors /media/storageC/ /mnt/icarus2/data/AphroditeBackup/storageC/;
+sudo rsync -avh --info=progress2 --update --no-links --exclude="*.Rdata" --exclude="*.RData" --exclude="*.fastq" --exclude="*.sam" --max-size=20g --delete --ignore-errors /media/storageD/ /mnt/icarus2/data/AphroditeBackup/storageD/;
+sudo rsync -avh --info=progress2 --update --no-links --exclude="*.Rdata" --exclude="*.RData" --exclude="*.fastq" --exclude="*.sam" --max-size=20g --delete --ignore-errors /media/storageE/ /mnt/icarus2/data/AphroditeBackup/storageE/;
 '
